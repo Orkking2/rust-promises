@@ -1,7 +1,7 @@
 [package]
 name = "promisery"
 description = "A JavaScript-inspired, ergonomic, and composable Promise type for Rust, supporting background work, chaining, and error handling with Result."
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 repository = "https://github.com/Orkking2/rust-promises"
 keywords = ["promise", "javascript", "async", "futures", "concurrency"]

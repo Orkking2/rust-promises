@@ -1,39 +1,57 @@
-# rust-promises
-[![Crates.io](https://img.shields.io/badge/crates.io-v0.3-orange.svg)](https://crates.io/crate/promises)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/SnirkImmington/promises)
+# promisery
 
-This library seeks to fully, effectively and simply recreate lightweight 
-Javascript-style promises in Rust.
+[![Crates.io](https://img.shields.io/crates/v/promisery.svg)](https://crates.io/crates/promisery)
+[![Docs.rs](https://docs.rs/promisery/badge.svg)](https://docs.rs/promisery)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](./LICENSE)
 
-`rust-promises` offers all the features of Ecmascript 6 promises plus a few 
-Rust methods from `Result<T, E>`, implemented using the `std::thread` API and 
-Rust's asyncronous `Sender` and `Receiver`.
+A JavaScript-inspired, ergonomic, and composable Promise type for Rust, supporting background work, chaining, and error handling with `Result`.
 
-## Examples
+---
 
-TODO (after adding some `Result` methods to `Promise`).
+## Features
+- ECMAScript 5-style promises with Rust's type safety
+- Chaining with `.then`, `.map`, and `.map_err`
+- Combinators: `Promise::all`, `Promise::race`
+- Panic-safe: panics in promise tasks are detected and reported (see `Promise::wait_nopanic`)
+- Fully documented with tested examples
 
-## Why?
+## Installation
+Add to your `Cargo.toml`:
+```toml
+promisery = "1.0.0"
+```
 
-Promises are an excellent building block for asyncronous programming. They're
-a great way to build an asyncronous library, and also a small dependency for
-existing code.
+## Example
+```rust
+use promisery::Promise;
 
-Javascript's promises were adapted from promises in a programming language 
-called [E](erights.org), which has a very powerful distributed computing
-architecture using message passing. 
+let p = Promise::<_, ()>::new(|| Ok(2))
+    .then(|res| res.map(|v| v * 10))
+    .then(|res| res.map(|v| v + 5));
+assert_eq!(p.wait(), Ok(25));
+```
 
-Rust's `std::sync::mpsc::{Sender, Receiver}` provide a way to build such an
-architecture (and promises) from Rust's safe threading systems. 
+## API Highlights
+- **Chaining:**
+  - `.then` for full control over result and error
+  - `.map` for value transformation
+  - `.map_err` for error transformation
+- **Combinators:**
+  - `Promise::all` waits for all promises
+  - `Promise::race` resolves/rejects with the first to finish
+- **Panic Handling:**
+  - Panics in promise tasks are detected and reported via `PromisePanic`
+  - Use `.wait_nopanic()` to safely handle panics
 
-### Oh great, another promise library
-There are currently 5 asyncronous libraries on crates.io which offer promises
-or futures. However they all have problems:
-* ~~They are all in beta and unstable, with versions < 0.5~~ (like this library
-right now...)
-* Some of them are larger async libraries. They require programming within 
-event loops, or are designed for specific scenarios. If you want a whole async
-library for a specific type of programming, go use those.
-* The rest are variations on the promise concept, i.e. returning a 
-`(Future, Promise)` pair from `Promise::new()`. If you know how to use that, 
-go to those libraries, I guess.
+## Why promisery?
+- Lightweight, no async runtime required
+- Familiar API for those coming from JavaScript
+- Integrates with Rust's `Result`-based error handling
+- Does not spawn a new thread for each action that produces a new promise (see the documentation for each method for more details)
+
+## License
+MIT OR Apache-2.0
+
+---
+
+See [docs.rs/promisery](https://docs.rs/promisery) for full documentation and more examples.

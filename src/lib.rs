@@ -13,7 +13,7 @@
 //!
 //! ## Example
 //! ```
-//! use promise::Promise;
+//! use promisery::Promise;
 //! let p = Promise::<_, ()>::new(|| Ok(2))
 //!     .then(|res| res.map(|v| v * 10))
 //!     .then(|res| res.map(|v| v + 5));
@@ -50,7 +50,7 @@ use std::{
 /// 
 /// # Example
 /// ```
-/// # use promise::{Promise, PromisePanic};
+/// # use promisery::{Promise, PromisePanic};
 /// # use std::thread::sleep;
 /// # use std::time::Duration;
 /// let p = Promise::<(), ()>::new(|| panic!());
@@ -96,7 +96,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # Examples
     /// ## Successful promise
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// # use std::thread::sleep;
     /// # use std::time::Duration;
     /// let p = Promise::<(), ()>::new(|| Ok(()));
@@ -106,7 +106,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// 
     /// ## Promise still pending
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// # use std::thread::sleep;
     /// # use std::time::Duration;
     /// let p = Promise::<(), ()>::new(|| { sleep(Duration::from_secs(1)); Ok(()) });
@@ -115,7 +115,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// 
     /// ## Promise panicked
     /// ```
-    /// # use promise::{Promise, PromisePanic};
+    /// # use promisery::{Promise, PromisePanic};
     /// # use std::thread::sleep;
     /// # use std::time::Duration;
     /// let p = Promise::<(), ()>::new(|| panic!());
@@ -136,7 +136,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # Examples
     /// ## Successful promise
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// # use std::thread::sleep;
     /// # use std::time::Duration;
     /// let p = Promise::<(), ()>::new(|| Ok(()));
@@ -146,7 +146,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// 
     /// ## Unsuccessful promise
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// # use std::thread::sleep;
     /// # use std::time::Duration;
     /// let p = Promise::<(), ()>::new(|| panic!());
@@ -161,7 +161,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// 
     /// # Example
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// # use std::thread::sleep;
     /// # use std::time::Duration;
     /// let p = Promise::<(), ()>::new(|| panic!());
@@ -180,7 +180,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// 
     /// # Example
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::new(|| Ok(1));
     /// assert_eq!(p.wait(), Ok(1));
     /// let p2 = Promise::<(), _>::new(|| Err("fail"));
@@ -197,7 +197,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// 
     /// # Example
     /// ```
-    /// # use promise::{Promise, PromisePanic};
+    /// # use promisery::{Promise, PromisePanic};
     /// let p = Promise::<(), ()>::new(|| panic!());
     /// assert_eq!(p.wait_nopanic(), Err(PromisePanic));
     /// // This does make it a little more complicated to extract values.
@@ -218,7 +218,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # Examples
     /// ## Chaining and transforming values:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::new(|| Ok(2))
     ///     .then(|res| res.map(|v| v * 10))
     ///     .then(|res| res.map(|v| v + 5));
@@ -227,7 +227,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///
     /// ## Propagating errors:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<i32, _>::new(|| Err("fail"))
     ///     .then(|res| res.map(|v| v + 1));
     /// assert_eq!(p.wait(), Err("fail"));
@@ -235,7 +235,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///
     /// ## Changing error type:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<(), _>::new(|| Err("fail"))
     ///     .then(|res| res.map_err(|e| format!("error: {}", e)));
     /// assert_eq!(p.wait(), Err("error: fail".to_string()));
@@ -266,14 +266,14 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # Examples
     /// ## Basic mapping:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::new(|| Ok(3)).map(|v| Ok(v * 2));
     /// assert_eq!(p.wait(), Ok(6));
     /// ```
     ///
     /// ## Chaining with error propagation:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<_, _>::new(|| Ok(1))
     ///     .map(|v| Ok(v + 1))
     ///     .map(|v| if v > 1 { Err("too big") } else { Ok(v) });
@@ -282,7 +282,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///
     /// ## Mapping after an error (will not run):
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<i32, _>::new(|| Err("fail")).map(|v| Ok(v + 1));
     /// assert_eq!(p.wait(), Err("fail"));
     /// ```
@@ -304,7 +304,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # Examples
     /// ## Basic error mapping:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<(), _>::new(|| Err("fail"))
     ///     .map_err(|e| Err(format!("Promise failed: {}", e)));
     /// assert_eq!(p.wait(), Err("Promise failed: fail".to_string()));
@@ -312,14 +312,14 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///
     /// ## Error mapping after a successful value (will not run):
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<_, &str>::new(|| Ok(5)).map_err(|e| Err(format!("err: {}", e)));
     /// assert_eq!(p.wait(), Ok(5));
     /// ```
     ///
     /// ## Chaining error mapping:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<(), &str>::new(|| Err("fail"))
     ///     .map_err(|e| Err(format!("1st: {}", e)))
     ///     .map_err(|e| Err(format!("2nd: {}", e)));
@@ -342,21 +342,21 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # Examples
     /// ## Basic usage:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::new(|| Ok(42));
     /// assert_eq!(p.wait(), Ok(42));
     /// ```
     ///
     /// ## With error:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<(), _>::new(|| Err("fail"));
     /// assert_eq!(p.wait(), Err("fail"));
     /// ```
     ///
     /// ## Chaining with map:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::new(|| Ok(10)).map(|v| Ok(v * 2));
     /// assert_eq!(p.wait(), Ok(20));
     /// ```
@@ -387,7 +387,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # Examples
     /// ## Basic race:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// # use std::thread::sleep;
     /// # use std::time::Duration;
     /// let p = Promise::race(vec![
@@ -399,7 +399,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///
     /// ## Race with error:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// # use std::thread::sleep;
     /// # use std::time::Duration;
     /// let p = Promise::race(vec![
@@ -411,7 +411,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// 
     /// ## Empty race:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// assert!(Promise::<(), ()>::race(Vec::new()).is_none());
     /// ```
     pub fn race(mut promises: Vec<Promise<T, E>>) -> Option<Promise<T, E>> {
@@ -436,7 +436,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # Examples
     /// ## All succeed:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let ps: Vec<_> = (0..3).map(|i| Promise::<_, ()>::new(move || Ok(i))).collect();
     /// let all = Promise::all(ps);
     /// assert_eq!(all.wait(), Ok(vec![0, 1, 2]));
@@ -444,7 +444,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///
     /// ## With an error:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let ps: Vec<_> = vec![
     ///     Promise::new(|| Ok(1)),
     ///     Promise::new(|| Err("fail")),
@@ -456,7 +456,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///
     /// ## Empty input:
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let all = Promise::<(), ()>::all(vec![]);
     /// assert_eq!(all.wait(), Ok(vec![]));
     /// ```
@@ -482,7 +482,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///
     /// # Examples
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::resolve(123);
     /// assert_eq!(p.wait(), Ok(123));
     /// ```
@@ -494,7 +494,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///
     /// # Examples
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<(), _>::reject("fail");
     /// assert_eq!(p.wait(), Err("fail"));
     /// ```
@@ -506,7 +506,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///
     /// # Examples
     /// ```
-    /// # use promise::Promise;
+    /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::from_result(Ok(1));
     /// assert_eq!(p.wait(), Ok(1));
     /// let p = Promise::<(), _>::from_result(Err("fail"));
