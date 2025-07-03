@@ -11,6 +11,8 @@
 //! - Combinators: `Promise::all`, `Promise::race`
 //! - Panic-safe: panics in promise tasks are detected and reported
 //! - Fully documented with tested examples
+//! - **Timeout and deadline support:** Use [`Promise::wait_timeout`], [`Promise::wait_deadline`] to wait with timeouts or deadlines.
+//! - **Safe and unsafe waiting:** Use [`Promise::wait`] for panic-safe waiting, or [`Promise::wait_nopanic`] for unsafe, panic-propagating waiting.
 //!
 //! ## Example
 //! ```
@@ -24,9 +26,15 @@
 //! ## Error Handling
 //! All errors are handled via `Result<T, E>`. Panics in promise tasks are reported via [`PromisePanic`] (see [`Promise::wait`]).
 //!
+//! ## Waiting for Results
+//! - Use [`Promise::wait`] for panic-safe waiting (returns a double `Result`).
+//! - Use [`Promise::wait_nopanic`] (unsafe) to panic if the background task panicked.
+//! - Use [`Promise::wait_timeout`] or [`Promise::wait_deadline`] to wait with a timeout or until a deadline.
+//!
 //! ## See Also
 //! - [`Promise`] for the main type
 //! - [`PromisePanic`] for panic detection
+//! - [`Promise::wait`], [`Promise::wait_nopanic`], [`Promise::wait_timeout`], [`Promise::wait_deadline`] for waiting options
 //! - [README.md](https://github.com/Orkking2/rust-promises#readme) for more details and usage
 //!
 //! ---
@@ -193,6 +201,9 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// This method will never panic. If the promise's background task panicked, returns `Err(PromisePanic)`.
     /// Otherwise, returns `Ok(Ok(value))` or `Ok(Err(error))` as appropriate.
     ///
+    /// See also: [`wait_nopanic`](Self::wait_nopanic) for an unsafe, panic-propagating variant.
+/// See also: [`wait_timeout`](Self::wait_timeout) and [`wait_deadline`](Self::wait_deadline) for time-limited waiting.
+    ///
     /// # Example
     /// ```
     /// # use promisery::{Promise, PromisePanic};
@@ -214,6 +225,11 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # Panics
     /// Panics if the background thread panicked.
     ///
+    /// # Safety
+    /// This method is unsafe because it will panic if the background thread panicked. Prefer [`wait`](Self::wait) for panic-safe waiting.
+    ///
+    /// See also: [`wait_timeout`](Self::wait_timeout) and [`wait_deadline`](Self::wait_deadline) for time-limited waiting.
+    ///
     /// # Example
     /// ```
     /// # use promisery::Promise;
@@ -229,6 +245,8 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// Returns `Ok(Ok(value))` or `Ok(Err(error))` if the promise resolves before the timeout,
     /// `Err(WaitTimeoutError::Timeout(self))` if the timeout is reached,
     /// or `Err(WaitTimeoutError::Panic(PromisePanic))` if the background task panicked.
+    ///
+    /// See also: [`wait`](Self::wait), [`wait_nopanic`](Self::wait_nopanic), [`wait_deadline`](Self::wait_deadline).
     ///
     /// # Example
     /// ```
@@ -255,6 +273,8 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// Returns `Ok(Ok(value))` or `Ok(Err(error))` if the promise resolves before the deadline,
     /// `Err(WaitTimeoutError::Timeout(self))` if the deadline is reached,
     /// or `Err(WaitTimeoutError::Panic(PromisePanic))` if the background task panicked.
+    ///
+    /// See also: [`wait`](Self::wait), [`wait_nopanic`](Self::wait_nopanic), [`wait_timeout`](Self::wait_timeout).
     ///
     /// # Example
     /// ```
