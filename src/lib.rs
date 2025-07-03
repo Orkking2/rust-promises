@@ -89,9 +89,9 @@ pub struct Promise<T: Send, E: Send> {
 
 impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// Returns `true` if the promise has a `Result` ready to be reaped, and `false` otherwise.
-    /// Returns a [`PromisePanic`] if this promise has panicked.
+    /// Returns an error, specifically a [`PromisePanic`], if this promise has panicked.
     ///
-    /// If this returns `true`, then [`wait`](Self::wait) is guaranteed to not block.
+    /// If `true` is returned, [`wait`](Self::wait) is guaranteed to succeed without blocking.
     /// 
     /// # Examples
     /// ## Successful promise
@@ -190,7 +190,8 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
         self.wait_nopanic().unwrap()
     }
 
-    /// Fully identical to [`wait`](Self::wait), except it will never panic.
+    /// Fully identical to [`wait`](Self::wait), except it propogates an error if
+    /// this promise has panicked instead of continuing to unwind.
     /// 
     /// # Utility
     /// This can be useful when testing methods that can potentially panic.
@@ -380,9 +381,9 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
         Promise { rx, jtx }
     }
 
-    /// Returns a promise that resolves or rejects with the result of the first promise to complete from the given vector.
-    ///
-    /// Returns `None` if the input vector is empty.
+    /// Returns a promise that resolves or rejects with the result of the first promise to complete from the given vector
+    /// or `None` if the input vector is empty. If every promise passed to this method panics, the returned promise
+    /// will also be in a panicked state. Without this propogation, the returned promise would busy-wait forever.
     ///
     /// # Examples
     /// ## Basic race:
@@ -414,6 +415,18 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # use promisery::Promise;
     /// assert!(Promise::<(), ()>::race(Vec::new()).is_none());
     /// ```
+    /// 
+    /// ## Panicked race:
+    /// ```
+    /// # use promisery::{Promise, PromisePanic};
+    /// # use std::thread::sleep;
+    /// # use std::time::Duration;
+    /// let p = Promise::race(vec![
+    ///     Promise::<(), ()>::new(|| panic!()),
+    ///     Promise::new(|| panic!()),
+    /// ]).unwrap();
+    /// assert_eq!(p.wait_nopanic(), Err(PromisePanic));
+    /// ```
     pub fn race(mut promises: Vec<Promise<T, E>>) -> Option<Promise<T, E>> {
         if promises.is_empty() {
             None
@@ -421,6 +434,12 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
             Some(Self::new(move || loop {
                 if let Some(promise) = promises.extract_if(.., |p| p.fulfilled()).next() {
                     break promise.wait();
+                }
+                // Drop all panicked promises
+                let _ = promises.extract_if(.., |p| p.panicked()).collect::<Vec<_>>();
+                // If every promise has panicked, propogate the panic.
+                if promises.is_empty() {
+                    panic!();
                 }
             }))
         }
