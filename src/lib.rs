@@ -1,3 +1,4 @@
+#![doc(html_root_url = "https://docs.rs/promise/1.0.0")]
 //!
 //! # Promises for Rust
 //!
