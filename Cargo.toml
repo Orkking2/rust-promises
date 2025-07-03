@@ -1,9 +1,18 @@
 [package]
-name = "promises"
-description = "Effective, simple, lightweight Javascript promises in Rust"
-version = "0.3.0"
-repository = "https://github.com/SnirkImmington/rust-promises"
-keywords = ["promise", "Javascript", "async", "futures"]
+name = "promise"
+description = "A JavaScript-inspired, ergonomic, and composable Promise type for Rust, supporting background work, chaining, and error handling with Result."
+version = "1.0.0"
+edition = "2021"
+repository = "https://github.com/Orkking2/promise"
+keywords = ["promise", "javascript", "async", "futures", "concurrency"]
+categories = ["asynchronous", "concurrency", "data-structures"]
 readme = "README.md"
-license = "MIT"
-authors = ["Snirk Immington <snirk.immington@gmail.com>"]
+license = "MIT OR Apache-2.0"
+authors = ["Nicolas Bird von Eyben <nicolas.bird.voneyben@gmail.com>"]
+documentation = "https://docs.rs/promise"
+
+[dependencies]
+oneshot = "0.1.11"
+
+[dev-dependencies]
+oneshot = "0.1.11"

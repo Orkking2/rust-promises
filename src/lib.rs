@@ -1,329 +1,518 @@
-//! Promises in Rust.
-//! See the `Promise` struct for more details.
+//!
+//! # Promises for Rust
+//!
+//! This crate provides a JavaScript-inspired, ergonomic, and composable Promise type for Rust, supporting background work, chaining, and error handling with `Result`.
+//!
+//! ## Features
+//! - ECMAScript 5-style promises with Rust's type safety
+//! - Chaining with `.then`, `.map`, and `.map_err`
+//! - Combinators: `Promise::all`, `Promise::race`
+//! - Panic-safe: panics in promise tasks are detected and reported
+//! - Fully documented with tested examples
+//!
+//! ## Example
+//! ```
+//! use promise::Promise;
+//! let p = Promise::<_, ()>::new(|| Ok(2))
+//!     .then(|res| res.map(|v| v * 10))
+//!     .then(|res| res.map(|v| v + 5));
+//! assert_eq!(p.wait(), Ok(25));
+//! ```
+//!
+//! ## Error Handling
+//! All errors are handled via `Result<T, E>`. Panics in promise tasks are reported via [`PromisePanic`].
+//!
+//! ## See Also
+//! - [`Promise`] for the main type
+//! - [`PromisePanic`] for panic detection
+//! - [README.md](https://github.com/yourusername/rust-promises#readme) for more details and usage
+//!
+//! ---
+//!
+//! Released under the MIT License.
 
 #![warn(missing_docs)]
 
 #[cfg(test)]
 mod tests;
 
-use std::thread;
-use std::sync::mpsc::channel;
-//use std::thread::JoinHandle;
-use std::marker::{Send};
-use std::sync::mpsc::{Sender, Receiver, TryRecvError};
+use std::{
+    marker::Send,
+    sync::mpsc::{self, Sender},
+    thread,
+};
 
-/// A promise is a way of doing work in the background. The promises in
-/// this library have the same featureset as those in Ecmascript 5.
+#[derive(Debug, PartialEq)]
+/// Error type returned when a promise panics during execution.
+/// 
+/// Only useful for the [`wait_nopanic`](Promise::wait_nopanic) method.
+/// 
+/// # Example
+/// ```
+/// # use promise::{Promise, PromisePanic};
+/// # use std::thread::sleep;
+/// # use std::time::Duration;
+/// let p = Promise::<(), ()>::new(|| panic!());
+/// # sleep(Duration::from_millis(50));
+/// assert_eq!(p.wait_nopanic(), Err(PromisePanic));
+/// ```
+pub struct PromisePanic;
+
+/// A promise is a way of doing work in the background, similar to JavaScript promises.
 ///
-/// # Promises
-/// Promises (sometimes known as "futures") are objects that represent
-/// asynchronous tasks being run in the background, or results which
-/// will exist in the future.
-/// A promise will be in state of running, fulfilled, rejected, or done.
-/// In order to use the results of a fulfilled promise, one attaches another
-/// promise to it (i.e. via `then`). Like their Javascript counterparts,
-/// promises can return an error (of type `E`). Unlike Javascript, success or
-/// failure is indicated by a `Result` type. This is much more Rustic and
-/// allows existing functions which return a `Result<T, E>` to be used.
+/// Promises in this library have the same featureset as those in ECMAScript 5, but use Rust's `Result` type for error handling.
+/// 
+/// Similarly to the JS promise, this [`Promise`] implements an event queue to handle [`then`](Self::then). This means there is very little
+/// overhead when chaining methods. Every [`Promise`] (except when using [`all`](Self::all)) must have its own thread, of course, so they can 
+/// each evaluate their functions independently.
+///
+/// # States
+/// Promises can be pending (work in progress), fulfilled (result ready), or panicked (background task panicked).
+/// To use the result of a fulfilled promise, attach another promise to it (e.g., via [`then`]).
+///
+/// # Error Handling
+/// Unlike JavaScript, success or failure is indicated by a `Result<T, E>`, allowing ergonomic use of Rust's error handling idioms.
 ///
 /// # Panics
-/// If the function being executed by a promise panics, it does so silently.
-/// The panic will not resurface in the thread which created the promise,
-/// and promises waiting on its result will never be called. In addition,
-/// the `all` and `race` proimse methods will _ignore_ "dead" promises. They
-/// will remove promises from their lists, and if there aren't any left
-/// they will silently exit without doing anything.
+/// If a function passed to a promise, through any of the methods which allow such actions (e.g. [`new`](Self::new), [`then`](Self::then))
+/// panics, then the promise enters a special state as described by [`poll`](Self::poll). Such promises will not continue to evaluate any functions.
+/// If you are working with functions that can panic (beyond your control), use [`wait_nopanic`](Self::wait_nopanic) instead of [`wait`](Self::wait). 
 ///
-/// Unfortunately, panics must be ignored for two reasons:
-/// * Panic messages don't have a concrete type yet in Rust. If they did,
-/// promiess would be able to inspect their predecessors' errors.
-/// * Although a `Receiver` can correctly handle its paired `Sender` being
-/// dropped, such as during a panic, for reasons stated above the "message"
-/// of the panic is not relayed.
-///
-/// Finally, Ecmascript promises themselves do have the ability to return
-/// and error type, represented as a `Result<T, E>` here. Thus, one should
-/// use `try!` and other error handling rather than calls to `unwrap()`.
+/// ## Thus:
+/// It remains the general recommendation to use `Result`-based error handling
+/// rather than `unwrap()` in your functions, and this advice remains true for promise functions.
 pub struct Promise<T: Send, E: Send> {
-    receiver: Receiver<Result<T, E>>
+    rx: oneshot::Receiver<Result<T, E>>,
+    jtx: Sender<Box<dyn FnOnce() + Send + 'static>>,
 }
 
 impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
-
-    /// Chains a function to be called after this promise resolves.
+    /// Returns `true` if the promise has a `Result` ready to be reaped, and `false` otherwise.
+    /// Returns a [`PromisePanic`] if this promise has panicked.
     ///
-    ///
-    pub fn then<T2, E2, F1, F2>(self, callback: F1, errback: F2)
-                                -> Promise<T2, E2>
-    where T2: Send + 'static, E2: Send + 'static,
-    F1: FnOnce(T) -> Result<T2, E2>, F2: FnOnce(E) -> Result<T2, E2>,
-    F1: Send + 'static, F2: Send + 'static {
-        let recv = self.receiver;
-        let (tx, rx) = channel();
-
-        thread::spawn(move || {
-            Promise::impl_then(tx, recv, callback, errback);
-        });
-
-        Promise { receiver: rx }
-    }
-
-    /// Chains a function to be called after this promise resolves,
-    /// using a `Result` type.
-    pub fn then_result<T2, E2, F>(self, resultback: F) -> Promise<T2, E2>
-    where T2: Send + 'static, E2: Send + 'static,
-    F: FnOnce(Result<T, E>) -> Result<T2, E2>, F: Send + 'static {
-        let recv = self.receiver;
-        let (tx, rx) = channel();
-
-        thread::spawn(move || {
-            Promise::impl_then_result(tx, recv, resultback);
-        });
-
-        Promise { receiver: rx }
-    }
-
-    /// Chains functions to be called after this promise resolves,
-    /// which return promises.
-    pub fn then_promise<T2, E2, F1, F2>(self, callback: F1, errback: F2)
-                                        -> Promise<T2, E2>
-    where T2: Send + 'static, E2: Send + 'static,
-    F1: FnOnce(T) -> Promise<T2, E2> + Send + 'static,
-    F2: FnOnce(E) -> Promise<T2, E2> + Send + 'static {
-        let val = self.receiver.recv();
-        match val {
-            Ok(result) => {
-                let promise = match result {
-                    Ok(val) => callback(val),
-                    Err(err) => errback(err)
-                };
-                return promise;
-            }
-            Err(err) =>
-                panic!("Unable to fulfill then_promise: \
-                        the previous promise panicked: {:?}", err)
+    /// If this returns `true`, then [`wait`](Self::wait) is guaranteed to not block.
+    /// 
+    /// # Examples
+    /// ## Successful promise
+    /// ```
+    /// # use promise::Promise;
+    /// # use std::thread::sleep;
+    /// # use std::time::Duration;
+    /// let p = Promise::<(), ()>::new(|| Ok(()));
+    /// # sleep(Duration::from_millis(50));
+    /// assert_eq!(p.poll(), Ok(true));
+    /// ```
+    /// 
+    /// ## Promise still pending
+    /// ```
+    /// # use promise::Promise;
+    /// # use std::thread::sleep;
+    /// # use std::time::Duration;
+    /// let p = Promise::<(), ()>::new(|| { sleep(Duration::from_secs(1)); Ok(()) });
+    /// assert_eq!(p.poll(), Ok(false));
+    /// ```
+    /// 
+    /// ## Promise panicked
+    /// ```
+    /// # use promise::{Promise, PromisePanic};
+    /// # use std::thread::sleep;
+    /// # use std::time::Duration;
+    /// let p = Promise::<(), ()>::new(|| panic!());
+    /// # sleep(Duration::from_millis(50));
+    /// assert_eq!(p.poll(), Err(PromisePanic));
+    /// ```
+    pub fn poll(&self) -> Result<bool, PromisePanic> {
+        if self.panicked() {
+            Err(PromisePanic)
+        } else {
+            Ok(self.fulfilled())
         }
     }
 
-    /// Chains a function to be called after this promise resolves,
-    /// taking in its result and returning a promise.
-    pub fn then_result_promise<T2, E2, F>(&self, promiseback: F)
-                                          -> Promise<T2, E2>
-    where T2: Send + 'static, E2: Send + 'static,
-    F: FnOnce(Result<T, E>) -> Promise<T2, E2> + Send + 'static {
-        let val = self.receiver.recv();
-        match val {
-            Ok(result) => promiseback(result),
-            Err(err) =>
-                panic!("Unable to fulfill then_result_promise \
-                        the previous promise panicked: {:?}", err)
-        }
+    /// Returns `true` if there is a message ready to be reaped, `false` otherwise.
+    /// If `true` is returned, [`wait`](Self::wait) is guaranteed to succeed without blocking.
+    /// 
+    /// # Examples
+    /// ## Successful promise
+    /// ```
+    /// # use promise::Promise;
+    /// # use std::thread::sleep;
+    /// # use std::time::Duration;
+    /// let p = Promise::<(), ()>::new(|| Ok(()));
+    /// # sleep(Duration::from_millis(50));
+    /// assert!(p.fulfilled());
+    /// ```
+    /// 
+    /// ## Unsuccessful promise
+    /// ```
+    /// # use promise::Promise;
+    /// # use std::thread::sleep;
+    /// # use std::time::Duration;
+    /// let p = Promise::<(), ()>::new(|| panic!());
+    /// # sleep(Duration::from_millis(50));
+    /// assert!(!p.fulfilled());
+    /// ```
+    pub fn fulfilled(&self) -> bool {
+        self.rx.has_message()
     }
 
-    /// Calls a function on the result of the promise if it is fulfilled.
+    /// Returns `true` if this promise panicked.
+    /// 
+    /// # Example
+    /// ```
+    /// # use promise::Promise;
+    /// # use std::thread::sleep;
+    /// # use std::time::Duration;
+    /// let p = Promise::<(), ()>::new(|| panic!());
+    /// # sleep(Duration::from_millis(50));
+    /// assert!(p.panicked());
+    /// ```
+    pub fn panicked(&self) -> bool {
+        self.rx.is_closed()
+    }
+
+    /// Blocks until a `Result` is ready, then returns it.
     ///
-    /// This is equivalent to a Javascript promise's `then` with one
-    /// callback, or Rust's `Result::map`.
-    pub fn then_ok<T2, F>(self, callback: F) -> Promise<T2, E>
-    where T2: Send + 'static, F: Send + 'static,
-    F: FnOnce(T) -> Result<T2, E> {
-        let recv = self.receiver;
-        let (tx, rx) = channel();
-
-        thread::spawn(move || {
-            Promise::impl_ok_then(tx, recv, callback);
-        });
-
-        Promise { receiver: rx }
+    /// # Panics
+    /// Panics if this [`Promise`] has panicked, which should not occur in normal use.
+    /// If this behaviour is unacceptable, use [`wait_nopanic`](Self::wait_nopanic).
+    /// 
+    /// # Example
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<_, ()>::new(|| Ok(1));
+    /// assert_eq!(p.wait(), Ok(1));
+    /// let p2 = Promise::<(), _>::new(|| Err("fail"));
+    /// assert_eq!(p2.wait(), Err("fail"));
+    /// ```
+    pub fn wait(self) -> Result<T, E> {
+        self.wait_nopanic().unwrap()
     }
 
-    /// Calls a function of the result of the promise if it fails.
+    /// Fully identical to [`wait`](Self::wait), except it will never panic.
+    /// 
+    /// # Utility
+    /// This can be useful when testing methods that can potentially panic.
+    /// 
+    /// # Example
+    /// ```
+    /// # use promise::{Promise, PromisePanic};
+    /// let p = Promise::<(), ()>::new(|| panic!());
+    /// assert_eq!(p.wait_nopanic(), Err(PromisePanic));
+    /// // This does make it a little more complicated to extract values.
+    /// let p2 = Promise::<_, ()>::new(|| Ok(1));
+    /// assert_eq!(p2.wait_nopanic(), Ok(Ok(1)));
+    /// ```
+    pub fn wait_nopanic(self) -> Result<Result<T, E>, PromisePanic> {
+        self.rx.recv().map_err(|_| PromisePanic)
+    }
+
+    /// Chains a function to be called after this promise resolves, returning a new promise.
     ///
-    /// This is equivalent to Javascript promise's `catch`.
-    pub fn then_err<E2, F>(self, errback: F) -> Promise<T, E2>
-    where F: FnOnce(E) -> Result<T, E2>, F: Send + 'static,
-    E2: Send + 'static {
-        let recv = self.receiver;
-        let (tx, rx) = channel();
-
-        thread::spawn(move || {
-            Promise::impl_err_then(tx, recv, errback);
-        });
-
-        Promise { receiver: rx }
-    }
-
-    /// Creates a new promsie, which will eventually resolve to one of the
-    /// values of the `Result<T, E>` type.
-    pub fn new<F>(func: F) -> Promise<T, E>
-    where F: FnOnce() -> Result<T, E>, F: Send + 'static {
-        let (tx, rx) = channel();
-
-        thread::spawn(move || {
-            Promise::impl_new(tx, func);
-        });
-
-        Promise { receiver: rx }
-    }
-
-    /// Applies a promise to the first of some promises to become fulfilled.
-    pub fn race(promises: Vec<Promise<T, E>>) -> Promise<T, E> {
-        let recs = promises.into_iter().map(|p| p.receiver).collect();
-        let (tx, rx) = channel::<Result<T, E>>();
-
-        thread::spawn(move || {
-            Promise::impl_race(tx, recs);
-        });
-
-        Promise { receiver: rx }
-    }
-
-    /// Calls a function with the result of all of the promises, or the error
-    /// of the first promise to error.
-    pub fn all(promises: Vec<Promise<T, E>>) -> Promise<Vec<T>, E> {
-        let receivers: Vec<Receiver<Result<T, E>>> =
-            promises.into_iter().map(|p| p.receiver).collect();
-        let (tx, rx) = channel();
-
-        thread::spawn(move || {
-            Promise::impl_all(tx, receivers);
-        });
-
-        return Promise { receiver: rx };
-    }
-
-    /// Creates a promise that resolves to a value
-    pub fn resolve(val: T) -> Promise<T, E> {
-        Promise::from_result(Ok(val))
-    }
-
-    /// Creates a promise that resolves to an error.
-    pub fn reject(val: E) -> Promise<T, E> {
-        Promise::from_result(Err(val))
-    }
-
-    /// Creates a new promise that will resolve to the result value.
-    pub fn from_result(result: Result<T, E>) -> Promise<T, E> {
-        let (tx, rx) = channel();
-        tx.send(result).unwrap();
-
-        Promise { receiver: rx }
-    }
-
-    // Implementation Functions
-
-    fn impl_new<F>(tx: Sender<Result<T, E>>, func: F)
-    where F: FnOnce() -> Result<T, E>, F: Send + 'static {
-        let result = func();
-        tx.send(result).unwrap_or(());
-    }
-
-    fn impl_then<T2, E2, F1, F2>(tx: Sender<Result<T2, E2>>,
-                                 rx: Receiver<Result<T, E>>,
-                                 callback: F1, errback: F2)
-    where T2: Send + 'static, E2: Send + 'static,
-    F1: FnOnce(T) -> Result<T2, E2>, F2: FnOnce(E) -> Result<T2, E2>,
-    F1: Send + 'static, F2: Send + 'static
+    /// The callback receives the `Result` of this promise and must return a new `Result`.
+    /// This allows for both value and error transformation.
+    /// 
+    /// If any previous method given to this [`Promise`] has panicked, this method will do nothing.
+    ///
+    /// # Examples
+    /// ## Chaining and transforming values:
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<_, ()>::new(|| Ok(2))
+    ///     .then(|res| res.map(|v| v * 10))
+    ///     .then(|res| res.map(|v| v + 5));
+    /// assert_eq!(p.wait(), Ok(25));
+    /// ```
+    ///
+    /// ## Propagating errors:
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<i32, _>::new(|| Err("fail"))
+    ///     .then(|res| res.map(|v| v + 1));
+    /// assert_eq!(p.wait(), Err("fail"));
+    /// ```
+    ///
+    /// ## Changing error type:
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<(), _>::new(|| Err("fail"))
+    ///     .then(|res| res.map_err(|e| format!("error: {}", e)));
+    /// assert_eq!(p.wait(), Err("error: fail".to_string()));
+    /// ```
+    pub fn then<T2: Send + 'static, E2: Send + 'static, F: Send + 'static>(
+        self,
+        callback: F,
+    ) -> Promise<T2, E2>
+    where
+        F: FnOnce(Result<T, E>) -> Result<T2, E2>,
     {
-        if let Ok(message) = rx.recv() {
-            match message {
-                Ok(val) => tx.send(callback(val)).unwrap_or(()),
-                Err(err) => tx.send(errback(err)).unwrap_or(())
-            };
-        }
+        let (ntx, nrx) = oneshot::channel();
+        let Promise { rx, jtx } = self;
+
+        // Simply drop the function if this promise is in a paniced state.
+        let _ = jtx.send(Box::new(move || {
+            ntx.send(callback(rx.recv().unwrap())).unwrap()
+        }));
+
+        Promise { rx: nrx, jtx }
     }
 
-    fn impl_then_result<T2, E2, F>(tx: Sender<Result<T2, E2>>,
-                                   rx: Receiver<Result<T, E>>,
-                                   resultback: F)
-    where T2: Send + 'static, E2: Send + 'static,
-    F: FnOnce(Result<T, E>) -> Result<T2, E2>, F: Send + 'static {
-
-        if let Ok(result) = rx.recv() {
-            tx.send(resultback(result)).unwrap_or(());
-        }
+    /// Maps the success value of this promise using the provided callback, returning a new promise.
+    ///
+    /// This is a convenience wrapper over [`then`](Self::then) for transforming only the `Ok` value.
+    /// Errors are passed through unchanged.
+    ///
+    /// # Examples
+    /// ## Basic mapping:
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<_, ()>::new(|| Ok(3)).map(|v| Ok(v * 2));
+    /// assert_eq!(p.wait(), Ok(6));
+    /// ```
+    ///
+    /// ## Chaining with error propagation:
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<_, _>::new(|| Ok(1))
+    ///     .map(|v| Ok(v + 1))
+    ///     .map(|v| if v > 1 { Err("too big") } else { Ok(v) });
+    /// assert_eq!(p.wait(), Err("too big"));
+    /// ```
+    ///
+    /// ## Mapping after an error (will not run):
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<i32, _>::new(|| Err("fail")).map(|v| Ok(v + 1));
+    /// assert_eq!(p.wait(), Err("fail"));
+    /// ```
+    pub fn map<T2: Send + 'static, F: Send + 'static>(self, callback: F) -> Promise<T2, E>
+    where
+        F: FnOnce(T) -> Result<T2, E>,
+    {
+        self.then(|res| match res {
+            Ok(ok) => callback(ok),
+            Err(err) => Err(err),
+        })
     }
 
-    fn impl_ok_then<T2, F>(tx: Sender<Result<T2, E>>,
-                           rx: Receiver<Result<T, E>>, callback: F)
-    where F: FnOnce(T) -> Result<T2, E>, F: Send + 'static,
-    T2: Send + 'static {
-        if let Ok(message) = rx.recv() {
-            match message {
-                Ok(val) => tx.send(callback(val)).unwrap_or(()),
-                Err(err) => tx.send(Err(err)).unwrap_or(())
-            }
-        }
+    /// Maps the error value of this promise using the provided callback, returning a new promise.
+    ///
+    /// This is a convenience wrapper over [`then`](Self::then) for transforming only the `Err` value.
+    /// Success values are passed through unchanged.
+    ///
+    /// # Examples
+    /// ## Basic error mapping:
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<(), _>::new(|| Err("fail"))
+    ///     .map_err(|e| Err(format!("Promise failed: {}", e)));
+    /// assert_eq!(p.wait(), Err("Promise failed: fail".to_string()));
+    /// ```
+    ///
+    /// ## Error mapping after a successful value (will not run):
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<_, &str>::new(|| Ok(5)).map_err(|e| Err(format!("err: {}", e)));
+    /// assert_eq!(p.wait(), Ok(5));
+    /// ```
+    ///
+    /// ## Chaining error mapping:
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<(), &str>::new(|| Err("fail"))
+    ///     .map_err(|e| Err(format!("1st: {}", e)))
+    ///     .map_err(|e| Err(format!("2nd: {}", e)));
+    /// assert_eq!(p.wait(), Err("2nd: 1st: fail".to_string()));
+    /// ```
+    pub fn map_err<E2: Send + 'static, F: Send + 'static>(self, errback: F) -> Promise<T, E2>
+    where
+        F: FnOnce(E) -> Result<T, E2>,
+    {
+        self.then(|res| match res {
+            Ok(ok) => Ok(ok),
+            Err(err) => errback(err),
+        })
     }
 
-    fn impl_err_then<E2, F>(tx: Sender<Result<T, E2>>,
-                           rx: Receiver<Result<T, E>>, errback: F)
-    where F: FnOnce(E) -> Result<T, E2>, F: Send + 'static,
-    E2: Send + 'static {
-        if let Ok(message) = rx.recv() {
-            match message {
-                Ok(val) => tx.send(Ok(val)).unwrap_or(()),
-                Err(err) => tx.send(errback(err)).unwrap_or(())
-            }
-        }
+    /// Spawns a new promise that executes the given function in a background thread.
+    ///
+    /// The function should return a `Result<T, E>`. The promise will resolve to this result.
+    ///
+    /// # Examples
+    /// ## Basic usage:
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<_, ()>::new(|| Ok(42));
+    /// assert_eq!(p.wait(), Ok(42));
+    /// ```
+    ///
+    /// ## With error:
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<(), _>::new(|| Err("fail"));
+    /// assert_eq!(p.wait(), Err("fail"));
+    /// ```
+    ///
+    /// ## Chaining with map:
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<_, ()>::new(|| Ok(10)).map(|v| Ok(v * 2));
+    /// assert_eq!(p.wait(), Ok(20));
+    /// ```
+    pub fn new<F: Send + 'static>(func: F) -> Promise<T, E>
+    where
+        F: FnOnce() -> Result<T, E>,
+    {
+        let (tx, rx) = oneshot::channel();
+        let (jtx, jrx) = mpsc::channel::<Box<dyn FnOnce() + Send + 'static>>();
+
+        thread::spawn(move || {
+            jrx.into_iter().for_each(|f| f());
+        });
+
+        // Safety: it is not possible for this promise to panic before being sent a job.
+        // Thusly the receiver *must* be alive and able to receive this message.
+        jtx.send(Box::new(move || {
+            tx.send(func()).unwrap();
+        })).unwrap();
+
+        Promise { rx, jtx }
     }
 
-    // Static methods
-
-    fn impl_race(tx: Sender<Result<T, E>>,
-                 mut recs: Vec<Receiver<Result<T, E>>>) {
-        'outer: loop {
-            // Don't get stuck in an infinite loop
-            if recs.len() == 0 { return; }
-            for i in 0..recs.len() {
-                match recs[i].try_recv() {
-                    Ok(val) => {
-                        tx.send(val).unwrap_or(());
-                        return;
-                    }
-                    Err(err) => {
-                        if err == TryRecvError::Disconnected {
-                            recs.remove(i);
-                        }
-                    }
+    /// Returns a promise that resolves or rejects with the result of the first promise to complete from the given vector.
+    ///
+    /// Returns `None` if the input vector is empty.
+    ///
+    /// # Examples
+    /// ## Basic race:
+    /// ```
+    /// # use promise::Promise;
+    /// # use std::thread::sleep;
+    /// # use std::time::Duration;
+    /// let p = Promise::race(vec![
+    ///     Promise::new(|| { sleep(Duration::from_millis(50)); Ok(1) }),
+    ///     Promise::<_, ()>::new(|| Ok(2)),
+    /// ]).unwrap();
+    /// assert_eq!(p.wait(), Ok(2));
+    /// ```
+    ///
+    /// ## Race with error:
+    /// ```
+    /// # use promise::Promise;
+    /// # use std::thread::sleep;
+    /// # use std::time::Duration;
+    /// let p = Promise::race(vec![
+    ///     Promise::new(|| { sleep(Duration::from_millis(50)); Ok(()) }),
+    ///     Promise::new(|| Err("fail")),
+    /// ]).unwrap();
+    /// assert_eq!(p.wait(), Err("fail"));
+    /// ```
+    /// 
+    /// ## Empty race:
+    /// ```
+    /// # use promise::Promise;
+    /// assert!(Promise::<(), ()>::race(Vec::new()).is_none());
+    /// ```
+    pub fn race(mut promises: Vec<Promise<T, E>>) -> Option<Promise<T, E>> {
+        if promises.is_empty() {
+            None
+        } else {
+            Some(Self::new(move || loop {
+                if let Some(promise) = promises.extract_if(.., |p| p.fulfilled()).next() {
+                    break promise.wait();
                 }
-            }
+            }))
         }
     }
 
-    fn impl_all(tx: Sender<Result<Vec<T>, E>>,
-                recs: Vec<Receiver<Result<T, E>>>) {
-        let mut values: Vec<T> = Vec::with_capacity(recs.len());
-        let mut mut_receivers = recs;
-        'outer: loop {
-            for i in 0..mut_receivers.len() {
-                match mut_receivers[i].try_recv() {
-                    Ok(val) => {
-                        match val {
-                            Ok(t) => values.push(t),
-                            Err(e) => {
-                                tx.send(Err(e)).unwrap_or(());
-                                return;
-                            }
-                        }
-                        mut_receivers.remove(i);
-                        break;
-                    }
-                    Err(err) => {
-                        if err == TryRecvError::Disconnected {
-                            mut_receivers.remove(i);
-                            break;
-                        }
-                    }
-                }
-            }
-            // Check if we are finished waiting for promises
-            // This can also happen if all promises panic
-            if mut_receivers.len() == 0 {
-                let result = Ok(values);
-                tx.send(result).unwrap_or(());
-                return; // Break from outer loop
-            }
+    /// Returns a promise that resolves when all input promises resolve, or rejects if any promise rejects.
+    /// This method does not spawn a new promise, instead opting to hijack the last promise in the vector 
+    /// and just [`then`](Self::then) all the logic required to reap the other promises.
+    ///
+    /// The output vector preserves the order of the input promises.
+    /// If the input is empty, [`wait`](Self::wait) will produce an empty vector.
+    ///
+    /// # Examples
+    /// ## All succeed:
+    /// ```
+    /// # use promise::Promise;
+    /// let ps: Vec<_> = (0..3).map(|i| Promise::<_, ()>::new(move || Ok(i))).collect();
+    /// let all = Promise::all(ps);
+    /// assert_eq!(all.wait(), Ok(vec![0, 1, 2]));
+    /// ```
+    ///
+    /// ## With an error:
+    /// ```
+    /// # use promise::Promise;
+    /// let ps: Vec<_> = vec![
+    ///     Promise::new(|| Ok(1)),
+    ///     Promise::new(|| Err("fail")),
+    ///     Promise::new(|| Ok(3)),
+    /// ];
+    /// let all = Promise::all(ps);
+    /// assert_eq!(all.wait(), Err("fail"));
+    /// ```
+    ///
+    /// ## Empty input:
+    /// ```
+    /// # use promise::Promise;
+    /// let all = Promise::<(), ()>::all(vec![]);
+    /// assert_eq!(all.wait(), Ok(vec![]));
+    /// ```
+    pub fn all(mut promises: Vec<Promise<T, E>>) -> Promise<Vec<T>, E> {
+        // This promise *must* resolve after the last promise (it must resovle after every promise)
+        // in the vector so it is feasible to simply hijack that promise's job queue
+        // instead of spawning a new promise and its associated context.
+        if let Some(hijacked) = promises.pop() {
+            hijacked.then(move |res| {
+                promises
+                    .into_iter()
+                    .map(|p| p.wait())
+                    .chain(std::iter::once(res))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+        } else {
+            // Cannot hijack the promise since no promises exist
+            Promise::new(|| Ok(Vec::new()))
         }
+    }
+
+    /// Creates a promise that immediately resolves to the given value.
+    ///
+    /// # Examples
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<_, ()>::resolve(123);
+    /// assert_eq!(p.wait(), Ok(123));
+    /// ```
+    pub fn resolve(val: T) -> Promise<T, E> {
+        Self::from_result(Ok(val))
+    }
+
+    /// Creates a promise that immediately rejects with the given error.
+    ///
+    /// # Examples
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<(), _>::reject("fail");
+    /// assert_eq!(p.wait(), Err("fail"));
+    /// ```
+    pub fn reject(val: E) -> Promise<T, E> {
+        Self::from_result(Err(val))
+    }
+
+    /// Creates a promise that immediately resolves to the given result.
+    ///
+    /// # Examples
+    /// ```
+    /// # use promise::Promise;
+    /// let p = Promise::<_, ()>::from_result(Ok(1));
+    /// assert_eq!(p.wait(), Ok(1));
+    /// let p = Promise::<(), _>::from_result(Err("fail"));
+    /// assert_eq!(p.wait(), Err("fail"));
+    /// ```
+    pub fn from_result(result: Result<T, E>) -> Promise<T, E> {
+        Promise::new(move || result)
     }
 }
+
