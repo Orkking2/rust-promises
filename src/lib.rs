@@ -21,12 +21,12 @@
 //! ```
 //!
 //! ## Error Handling
-//! All errors are handled via `Result<T, E>`. Panics in promise tasks are reported via [`PromisePanic`].
+//! All errors are handled via `Result<T, E>`. Panics in promise tasks are reported via [`PromisePanic`] (see [`Promise::wait_nopanic`]).
 //!
 //! ## See Also
 //! - [`Promise`] for the main type
 //! - [`PromisePanic`] for panic detection
-//! - [README.md](https://github.com/yourusername/rust-promises#readme) for more details and usage
+//! - [README.md](https://github.com/Orkking2/rust-promises#readme) for more details and usage
 //!
 //! ---
 //!
