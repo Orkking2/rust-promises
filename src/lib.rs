@@ -2,7 +2,7 @@
 //!
 //! # Promises for Rust
 //!
-//! This crate provides a JavaScript-inspired, ergonomic, and composable Promise type for Rust, supporting background work, 
+//! This crate provides a JavaScript-inspired, ergonomic, and composable Promise type for Rust, supporting background work,
 //! chaining, and error handling with `Result`.
 //!
 //! ## Features
@@ -42,7 +42,10 @@ use std::{
     marker::Send,
     sync::mpsc::{self, Sender},
     thread,
+    time::{Duration, Instant},
 };
+
+use oneshot::RecvTimeoutError;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 /// Error type returned when a promise panics during execution.
@@ -59,6 +62,16 @@ use std::{
 /// assert_eq!(p.wait(), Err(PromisePanic));
 /// ```
 pub struct PromisePanic;
+
+/// Error type returned when waiting on a promise with a timeout.
+///
+/// This enum indicates whether the wait operation timed out or the promise panicked.
+pub enum WaitTimeoutError<T: Send + 'static, E: Send + 'static> {
+    /// Indicates the promise panicked during execution.
+    Panic(PromisePanic),
+    /// Indicates the wait operation timed out and returns the original promise.
+    Timeout(Promise<T, E>),
+}
 
 /// A promise is a way of doing work in the background, similar to JavaScript promises.
 ///
@@ -78,7 +91,9 @@ pub struct PromisePanic;
 /// # Panics
 /// If a function passed to a promise, through any of the methods which allow such actions (e.g. [`new`](Self::new), [`then`](Self::then))
 /// panics, then the promise enters a special state as described by [`poll`](Self::poll). Such promises will not continue to evaluate any functions.
-/// If you are working with functions that can panic (beyond your control), use [`wait_nopanic`](Self::wait_nopanic) instead of [`wait`](Self::wait).
+/// When [`wait`](Self::wait)ing on a promise, you need to account for the possibility that the promise has panicked by manually `.unwrap()`ing.
+///
+/// If you can guarantee that your [`Promise`] will not panic, you can use [`wait_nopanic`](Self::wait_nopanic).
 ///
 /// **Thus**:
 /// It remains the general recommendation to use `Result`-based error handling
@@ -190,6 +205,76 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// ```
     pub fn wait(self) -> Result<Result<T, E>, PromisePanic> {
         self.rx.recv().map_err(|_| PromisePanic)
+    }
+
+    /// Blocks until a `Result` is ready and returns it, panicking if the promise's background task panicked.
+    ///
+    /// This method will panic if the background task panicked, otherwise it returns the result directly.
+    ///
+    /// # Panics
+    /// Panics if the background thread panicked.
+    ///
+    /// # Example
+    /// ```
+    /// # use promisery::Promise;
+    /// let p = Promise::<_, ()>::new(|| Ok(1));
+    /// assert_eq!(p.wait_nopanic(), Ok(1));
+    /// ```
+    pub fn wait_nopanic(self) -> Result<T, E> {
+        self.rx.recv().unwrap()
+    }
+
+    /// Blocks until a `Result` is ready or the specified timeout elapses.
+    ///
+    /// Returns `Ok(Ok(value))` or `Ok(Err(error))` if the promise resolves before the timeout,
+    /// `Err(WaitTimeoutError::Timeout(self))` if the timeout is reached,
+    /// or `Err(WaitTimeoutError::Panic(PromisePanic))` if the background task panicked.
+    ///
+    /// # Example
+    /// ```
+    /// # use promisery::{Promise, WaitTimeoutError};
+    /// # use std::time::Duration;
+    /// let p = Promise::<_, ()>::new(|| {
+    ///     std::thread::sleep(Duration::from_millis(100));
+    ///     Ok(42)
+    /// });
+    /// match p.wait_timeout(Duration::from_millis(10)) {
+    ///     Err(WaitTimeoutError::Timeout(_)) => (),
+    ///     _ => panic!("Expected timeout"),
+    /// }
+    /// ```
+    pub fn wait_timeout(self, timeout: Duration) -> Result<Result<T, E>, WaitTimeoutError<T, E>> {
+        self.rx.recv_timeout(timeout).map_err(|err| match err {
+            RecvTimeoutError::Disconnected => WaitTimeoutError::Panic(PromisePanic),
+            RecvTimeoutError::Timeout => WaitTimeoutError::Timeout(self),
+        })
+    }
+
+    /// Blocks until a `Result` is ready or the specified deadline is reached.
+    ///
+    /// Returns `Ok(Ok(value))` or `Ok(Err(error))` if the promise resolves before the deadline,
+    /// `Err(WaitTimeoutError::Timeout(self))` if the deadline is reached,
+    /// or `Err(WaitTimeoutError::Panic(PromisePanic))` if the background task panicked.
+    ///
+    /// # Example
+    /// ```
+    /// # use promisery::{Promise, WaitTimeoutError};
+    /// # use std::time::{Duration, Instant};
+    /// let p = Promise::<_, ()>::new(|| {
+    ///     std::thread::sleep(Duration::from_millis(100));
+    ///     Ok(())
+    /// });
+    /// let deadline = Instant::now() + Duration::from_millis(10);
+    /// match p.wait_deadline(deadline) {
+    ///     Err(WaitTimeoutError::Timeout(_)) => (),
+    ///     _ => panic!("Expected timeout"),
+    /// }
+    /// ```
+    pub fn wait_deadline(self, deadline: Instant) -> Result<Result<T, E>, WaitTimeoutError<T, E>> {
+        self.rx.recv_deadline(deadline).map_err(|err| match err {
+            RecvTimeoutError::Disconnected => WaitTimeoutError::Panic(PromisePanic),
+            RecvTimeoutError::Timeout => WaitTimeoutError::Timeout(self),
+        })
     }
 
     /// Chains a function to be called after this promise resolves, returning a new promise.
@@ -470,7 +555,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// let all = Promise::<(), ()>::all(vec![]);
     /// assert_eq!(all.wait(), Ok(Ok(vec![])));
     /// ```
-    /// 
+    ///
     /// ## With a panic:
     /// ```
     /// # use promisery::Promise;
