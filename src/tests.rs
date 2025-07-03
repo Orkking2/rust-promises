@@ -105,12 +105,10 @@ pub fn test_promise_all() {
             }),
         );
     }
-    let result = Promise::all(p).wait();
-    assert!(result.is_ok());
-    let v = result.unwrap();
-    assert_eq!(v.len(), 10);
-    for (i, val) in v.iter().enumerate() {
-        assert_eq!(*val, i as u32);
+    let result = Promise::all(p).wait().unwrap().unwrap();
+    assert_eq!(result.len(), 10);
+    for (i, val) in result.into_iter().enumerate() {
+        assert_eq!(val, i as u32);
     }
 }
 
@@ -122,7 +120,7 @@ pub fn test_promise_error_propagation() {
             Err(e) => Err(e),
         });
     let result = p.wait();
-    assert_eq!(result, Err("fail"));
+    assert_eq!(result, Ok(Err("fail")));
 }
 
 #[test]
@@ -130,8 +128,8 @@ pub fn test_promise_double_resolution() {
     let p = Promise::new(|| Ok::<i32, ()>(1));
     let first = p.wait();
     let second = first.clone();
-    assert_eq!(first, Ok(1));
-    assert_eq!(second, Ok(1));
+    assert_eq!(first, Ok(Ok(1)));
+    assert_eq!(second, Ok(Ok(1)));
 }
 
 #[test]

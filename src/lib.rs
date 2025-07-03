@@ -2,7 +2,8 @@
 //!
 //! # Promises for Rust
 //!
-//! This crate provides a JavaScript-inspired, ergonomic, and composable Promise type for Rust, supporting background work, chaining, and error handling with `Result`.
+//! This crate provides a JavaScript-inspired, ergonomic, and composable Promise type for Rust, supporting background work, 
+//! chaining, and error handling with `Result`.
 //!
 //! ## Features
 //! - ECMAScript 5-style promises with Rust's type safety
@@ -17,11 +18,11 @@
 //! let p = Promise::<_, ()>::new(|| Ok(2))
 //!     .then(|res| res.map(|v| v * 10))
 //!     .then(|res| res.map(|v| v + 5));
-//! assert_eq!(p.wait(), Ok(25));
+//! assert_eq!(p.wait(), Ok(Ok(25)));
 //! ```
 //!
 //! ## Error Handling
-//! All errors are handled via `Result<T, E>`. Panics in promise tasks are reported via [`PromisePanic`] (see [`Promise::wait_nopanic`]).
+//! All errors are handled via `Result<T, E>`. Panics in promise tasks are reported via [`PromisePanic`] (see [`Promise::wait`]).
 //!
 //! ## See Also
 //! - [`Promise`] for the main type
@@ -43,11 +44,11 @@ use std::{
     thread,
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 /// Error type returned when a promise panics during execution.
-/// 
+///
 /// Only useful for the [`wait_nopanic`](Promise::wait_nopanic) method.
-/// 
+///
 /// # Example
 /// ```
 /// # use promisery::{Promise, PromisePanic};
@@ -55,21 +56,21 @@ use std::{
 /// # use std::time::Duration;
 /// let p = Promise::<(), ()>::new(|| panic!());
 /// # sleep(Duration::from_millis(50));
-/// assert_eq!(p.wait_nopanic(), Err(PromisePanic));
+/// assert_eq!(p.wait(), Err(PromisePanic));
 /// ```
 pub struct PromisePanic;
 
 /// A promise is a way of doing work in the background, similar to JavaScript promises.
 ///
 /// Promises in this library have the same featureset as those in ECMAScript 5, but use Rust's `Result` type for error handling.
-/// 
+///
 /// Similarly to the JS promise, this [`Promise`] implements an event queue to handle [`then`](Self::then). This means there is very little
-/// overhead when chaining methods. Every [`Promise`] (except when using [`all`](Self::all)) must have its own thread, of course, so they can 
+/// overhead when chaining methods. Every [`Promise`] (except when using [`all`](Self::all)) must have its own thread, of course, so they can
 /// each evaluate their functions independently.
 ///
 /// # States
 /// Promises can be pending (work in progress), fulfilled (result ready), or panicked (background task panicked).
-/// To use the result of a fulfilled promise, attach another promise to it (e.g., via [`then`]).
+/// To use the result of a fulfilled promise, attach another promise to it (e.g., via [`then`](Self::then)).
 ///
 /// # Error Handling
 /// Unlike JavaScript, success or failure is indicated by a `Result<T, E>`, allowing ergonomic use of Rust's error handling idioms.
@@ -77,7 +78,7 @@ pub struct PromisePanic;
 /// # Panics
 /// If a function passed to a promise, through any of the methods which allow such actions (e.g. [`new`](Self::new), [`then`](Self::then))
 /// panics, then the promise enters a special state as described by [`poll`](Self::poll). Such promises will not continue to evaluate any functions.
-/// If you are working with functions that can panic (beyond your control), use [`wait_nopanic`](Self::wait_nopanic) instead of [`wait`](Self::wait). 
+/// If you are working with functions that can panic (beyond your control), use [`wait_nopanic`](Self::wait_nopanic) instead of [`wait`](Self::wait).
 ///
 /// **Thus**:
 /// It remains the general recommendation to use `Result`-based error handling
@@ -92,7 +93,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// Returns an error, specifically a [`PromisePanic`], if this promise has panicked.
     ///
     /// If `true` is returned, [`wait`](Self::wait) is guaranteed to succeed without blocking.
-    /// 
+    ///
     /// # Examples
     /// ## Successful promise
     /// ```
@@ -103,7 +104,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # sleep(Duration::from_millis(50));
     /// assert_eq!(p.poll(), Ok(true));
     /// ```
-    /// 
+    ///
     /// ## Promise still pending
     /// ```
     /// # use promisery::Promise;
@@ -112,7 +113,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// let p = Promise::<(), ()>::new(|| { sleep(Duration::from_secs(1)); Ok(()) });
     /// assert_eq!(p.poll(), Ok(false));
     /// ```
-    /// 
+    ///
     /// ## Promise panicked
     /// ```
     /// # use promisery::{Promise, PromisePanic};
@@ -132,7 +133,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
 
     /// Returns `true` if there is a message ready to be reaped, `false` otherwise.
     /// If `true` is returned, [`wait`](Self::wait) is guaranteed to succeed without blocking.
-    /// 
+    ///
     /// # Examples
     /// ## Successful promise
     /// ```
@@ -143,7 +144,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # sleep(Duration::from_millis(50));
     /// assert!(p.fulfilled());
     /// ```
-    /// 
+    ///
     /// ## Unsuccessful promise
     /// ```
     /// # use promisery::Promise;
@@ -158,7 +159,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     }
 
     /// Returns `true` if this promise panicked.
-    /// 
+    ///
     /// # Example
     /// ```
     /// # use promisery::Promise;
@@ -174,38 +175,20 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
 
     /// Blocks until a `Result` is ready, then returns it.
     ///
-    /// # Panics
-    /// Panics if this [`Promise`] has panicked, which should not occur in normal use.
-    /// If this behaviour is unacceptable, use [`wait_nopanic`](Self::wait_nopanic).
-    /// 
-    /// # Example
-    /// ```
-    /// # use promisery::Promise;
-    /// let p = Promise::<_, ()>::new(|| Ok(1));
-    /// assert_eq!(p.wait(), Ok(1));
-    /// let p2 = Promise::<(), _>::new(|| Err("fail"));
-    /// assert_eq!(p2.wait(), Err("fail"));
-    /// ```
-    pub fn wait(self) -> Result<T, E> {
-        self.wait_nopanic().unwrap()
-    }
-
-    /// Fully identical to [`wait`](Self::wait), except it propogates an error if
-    /// this promise has panicked instead of continuing to unwind.
-    /// 
-    /// # Utility
-    /// This can be useful when testing methods that can potentially panic.
-    /// 
+    /// This method will never panic. If the promise's background task panicked, returns `Err(PromisePanic)`.
+    /// Otherwise, returns `Ok(Ok(value))` or `Ok(Err(error))` as appropriate.
+    ///
     /// # Example
     /// ```
     /// # use promisery::{Promise, PromisePanic};
-    /// let p = Promise::<(), ()>::new(|| panic!());
-    /// assert_eq!(p.wait_nopanic(), Err(PromisePanic));
-    /// // This does make it a little more complicated to extract values.
-    /// let p2 = Promise::<_, ()>::new(|| Ok(1));
-    /// assert_eq!(p2.wait_nopanic(), Ok(Ok(1)));
+    /// let p = Promise::<_, ()>::new(|| Ok(1));
+    /// assert_eq!(p.wait(), Ok(Ok(1)));
+    /// let p2 = Promise::<(), _>::new(|| Err("fail"));
+    /// assert_eq!(p2.wait(), Ok(Err("fail")));
+    /// let p3 = Promise::<(), ()>::new(|| panic!());
+    /// assert_eq!(p3.wait(), Err(PromisePanic));
     /// ```
-    pub fn wait_nopanic(self) -> Result<Result<T, E>, PromisePanic> {
+    pub fn wait(self) -> Result<Result<T, E>, PromisePanic> {
         self.rx.recv().map_err(|_| PromisePanic)
     }
 
@@ -213,7 +196,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///
     /// The callback receives the `Result` of this promise and must return a new `Result`.
     /// This allows for both value and error transformation.
-    /// 
+    ///
     /// If any previous method given to this [`Promise`] has panicked, this method will do nothing.
     ///
     /// # Examples
@@ -223,7 +206,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// let p = Promise::<_, ()>::new(|| Ok(2))
     ///     .then(|res| res.map(|v| v * 10))
     ///     .then(|res| res.map(|v| v + 5));
-    /// assert_eq!(p.wait(), Ok(25));
+    /// assert_eq!(p.wait(), Ok(Ok(25)));
     /// ```
     ///
     /// ## Propagating errors:
@@ -231,7 +214,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # use promisery::Promise;
     /// let p = Promise::<i32, _>::new(|| Err("fail"))
     ///     .then(|res| res.map(|v| v + 1));
-    /// assert_eq!(p.wait(), Err("fail"));
+    /// assert_eq!(p.wait(), Ok(Err("fail")));
     /// ```
     ///
     /// ## Changing error type:
@@ -239,7 +222,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # use promisery::Promise;
     /// let p = Promise::<(), _>::new(|| Err("fail"))
     ///     .then(|res| res.map_err(|e| format!("error: {}", e)));
-    /// assert_eq!(p.wait(), Err("error: fail".to_string()));
+    /// assert_eq!(p.wait(), Ok(Err("error: fail".to_string())));
     /// ```
     pub fn then<T2: Send + 'static, E2: Send + 'static, F: Send + 'static>(
         self,
@@ -269,7 +252,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// ```
     /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::new(|| Ok(3)).map(|v| Ok(v * 2));
-    /// assert_eq!(p.wait(), Ok(6));
+    /// assert_eq!(p.wait(), Ok(Ok(6)));
     /// ```
     ///
     /// ## Chaining with error propagation:
@@ -278,14 +261,14 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// let p = Promise::<_, _>::new(|| Ok(1))
     ///     .map(|v| Ok(v + 1))
     ///     .map(|v| if v > 1 { Err("too big") } else { Ok(v) });
-    /// assert_eq!(p.wait(), Err("too big"));
+    /// assert_eq!(p.wait(), Ok(Err("too big")));
     /// ```
     ///
     /// ## Mapping after an error (will not run):
     /// ```
     /// # use promisery::Promise;
     /// let p = Promise::<i32, _>::new(|| Err("fail")).map(|v| Ok(v + 1));
-    /// assert_eq!(p.wait(), Err("fail"));
+    /// assert_eq!(p.wait(), Ok(Err("fail")));
     /// ```
     pub fn map<T2: Send + 'static, F: Send + 'static>(self, callback: F) -> Promise<T2, E>
     where
@@ -308,14 +291,14 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # use promisery::Promise;
     /// let p = Promise::<(), _>::new(|| Err("fail"))
     ///     .map_err(|e| Err(format!("Promise failed: {}", e)));
-    /// assert_eq!(p.wait(), Err("Promise failed: fail".to_string()));
+    /// assert_eq!(p.wait(), Ok(Err("Promise failed: fail".to_string())));
     /// ```
     ///
     /// ## Error mapping after a successful value (will not run):
     /// ```
     /// # use promisery::Promise;
     /// let p = Promise::<_, &str>::new(|| Ok(5)).map_err(|e| Err(format!("err: {}", e)));
-    /// assert_eq!(p.wait(), Ok(5));
+    /// assert_eq!(p.wait(), Ok(Ok(5)));
     /// ```
     ///
     /// ## Chaining error mapping:
@@ -324,7 +307,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// let p = Promise::<(), &str>::new(|| Err("fail"))
     ///     .map_err(|e| Err(format!("1st: {}", e)))
     ///     .map_err(|e| Err(format!("2nd: {}", e)));
-    /// assert_eq!(p.wait(), Err("2nd: 1st: fail".to_string()));
+    /// assert_eq!(p.wait(), Ok(Err("2nd: 1st: fail".to_string())));
     /// ```
     pub fn map_err<E2: Send + 'static, F: Send + 'static>(self, errback: F) -> Promise<T, E2>
     where
@@ -345,21 +328,21 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// ```
     /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::new(|| Ok(42));
-    /// assert_eq!(p.wait(), Ok(42));
+    /// assert_eq!(p.wait(), Ok(Ok(42)));
     /// ```
     ///
     /// ## With error:
     /// ```
     /// # use promisery::Promise;
     /// let p = Promise::<(), _>::new(|| Err("fail"));
-    /// assert_eq!(p.wait(), Err("fail"));
+    /// assert_eq!(p.wait(), Ok(Err("fail")));
     /// ```
     ///
     /// ## Chaining with map:
     /// ```
     /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::new(|| Ok(10)).map(|v| Ok(v * 2));
-    /// assert_eq!(p.wait(), Ok(20));
+    /// assert_eq!(p.wait(), Ok(Ok(20)));
     /// ```
     pub fn new<F: Send + 'static>(func: F) -> Promise<T, E>
     where
@@ -376,7 +359,8 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
         // Thusly the receiver *must* be alive and able to receive this message.
         jtx.send(Box::new(move || {
             tx.send(func()).unwrap();
-        })).unwrap();
+        }))
+        .unwrap();
 
         Promise { rx, jtx }
     }
@@ -395,7 +379,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///     Promise::new(|| { sleep(Duration::from_millis(50)); Ok(1) }),
     ///     Promise::<_, ()>::new(|| Ok(2)),
     /// ]).unwrap();
-    /// assert_eq!(p.wait(), Ok(2));
+    /// assert_eq!(p.wait(), Ok(Ok(2)));
     /// ```
     ///
     /// ## Race with error:
@@ -407,15 +391,16 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///     Promise::new(|| { sleep(Duration::from_millis(50)); Ok(()) }),
     ///     Promise::new(|| Err("fail")),
     /// ]).unwrap();
-    /// assert_eq!(p.wait(), Err("fail"));
+    /// assert_eq!(p.wait(), Ok(Err("fail")));
     /// ```
-    /// 
+    ///
     /// ## Empty race:
     /// ```
     /// # use promisery::Promise;
-    /// assert!(Promise::<(), ()>::race(Vec::new()).is_none());
+    /// let opt_p = Promise::<(), ()>::race(vec![]);
+    /// assert!(opt_p.is_none());
     /// ```
-    /// 
+    ///
     /// ## Panicked race:
     /// ```
     /// # use promisery::{Promise, PromisePanic};
@@ -425,7 +410,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///     Promise::<(), ()>::new(|| panic!()),
     ///     Promise::new(|| panic!()),
     /// ]).unwrap();
-    /// assert_eq!(p.wait_nopanic(), Err(PromisePanic));
+    /// assert_eq!(p.wait(), Err(PromisePanic));
     /// ```
     pub fn race(mut promises: Vec<Promise<T, E>>) -> Option<Promise<T, E>> {
         if promises.is_empty() {
@@ -433,10 +418,13 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
         } else {
             Some(Self::new(move || loop {
                 if let Some(promise) = promises.extract_if(.., |p| p.fulfilled()).next() {
-                    break promise.wait();
+                    // Safety: p.fulfilled being true guarantees we do not panic.
+                    break promise.wait().unwrap();
                 }
                 // Drop all panicked promises
-                let _ = promises.extract_if(.., |p| p.panicked()).collect::<Vec<_>>();
+                let _ = promises
+                    .extract_if(.., |p| p.panicked())
+                    .collect::<Vec<_>>();
                 // If every promise has panicked, propogate the panic.
                 if promises.is_empty() {
                     panic!();
@@ -446,11 +434,14 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     }
 
     /// Returns a promise that resolves when all input promises resolve, or rejects if any promise rejects.
-    /// This method does not spawn a new promise, instead opting to hijack the last promise in the vector 
-    /// and just [`then`](Self::then) all the logic required to reap the other promises.
+    /// This method *will always* produce a new thread context which [`wait`](Self::wait)s on all the input
+    /// promises, pruning any that panic.
     ///
     /// The output vector preserves the order of the input promises.
     /// If the input is empty, [`wait`](Self::wait) will produce an empty vector.
+    ///
+    /// # Panic safety:
+    /// If an input promise enters a panicked state it will be skipped
     ///
     /// # Examples
     /// ## All succeed:
@@ -458,7 +449,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// # use promisery::Promise;
     /// let ps: Vec<_> = (0..3).map(|i| Promise::<_, ()>::new(move || Ok(i))).collect();
     /// let all = Promise::all(ps);
-    /// assert_eq!(all.wait(), Ok(vec![0, 1, 2]));
+    /// assert_eq!(all.wait(), Ok(Ok(vec![0, 1, 2])));
     /// ```
     ///
     /// ## With an error:
@@ -470,31 +461,34 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     ///     Promise::new(|| Ok(3)),
     /// ];
     /// let all = Promise::all(ps);
-    /// assert_eq!(all.wait(), Err("fail"));
+    /// assert_eq!(all.wait(), Ok(Err("fail")));
     /// ```
     ///
     /// ## Empty input:
     /// ```
     /// # use promisery::Promise;
     /// let all = Promise::<(), ()>::all(vec![]);
-    /// assert_eq!(all.wait(), Ok(vec![]));
+    /// assert_eq!(all.wait(), Ok(Ok(vec![])));
     /// ```
-    pub fn all(mut promises: Vec<Promise<T, E>>) -> Promise<Vec<T>, E> {
-        // This promise *must* resolve after the last promise (it must resovle after every promise)
-        // in the vector so it is feasible to simply hijack that promise's job queue
-        // instead of spawning a new promise and its associated context.
-        if let Some(hijacked) = promises.pop() {
-            hijacked.then(move |res| {
-                promises
-                    .into_iter()
-                    .map(|p| p.wait())
-                    .chain(std::iter::once(res))
-                    .collect::<Result<Vec<_>, _>>()
-            })
-        } else {
-            // Cannot hijack the promise since no promises exist
-            Promise::new(|| Ok(Vec::new()))
-        }
+    /// 
+    /// ## With a panic:
+    /// ```
+    /// # use promisery::Promise;
+    /// let ps: Vec<_> = vec![
+    ///     Promise::<_, ()>::new(|| Ok(1)),
+    ///     Promise::new(|| panic!()),
+    ///     Promise::new(|| Ok(3)),
+    /// ];
+    /// let all = Promise::all(ps);
+    /// assert_eq!(all.wait(), Ok(Ok(vec![1, 3])));
+    /// ```
+    pub fn all(promises: Vec<Promise<T, E>>) -> Promise<Vec<T>, E> {
+        Promise::new(move || {
+            promises
+                .into_iter()
+                .filter_map(|p| p.wait().ok())
+                .collect::<Result<Vec<_>, _>>()
+        })
     }
 
     /// Creates a promise that immediately resolves to the given value.
@@ -503,7 +497,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// ```
     /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::resolve(123);
-    /// assert_eq!(p.wait(), Ok(123));
+    /// assert_eq!(p.wait(), Ok(Ok(123)));
     /// ```
     pub fn resolve(val: T) -> Promise<T, E> {
         Self::from_result(Ok(val))
@@ -515,7 +509,7 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// ```
     /// # use promisery::Promise;
     /// let p = Promise::<(), _>::reject("fail");
-    /// assert_eq!(p.wait(), Err("fail"));
+    /// assert_eq!(p.wait(), Ok(Err("fail")));
     /// ```
     pub fn reject(val: E) -> Promise<T, E> {
         Self::from_result(Err(val))
@@ -527,9 +521,9 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     /// ```
     /// # use promisery::Promise;
     /// let p = Promise::<_, ()>::from_result(Ok(1));
-    /// assert_eq!(p.wait(), Ok(1));
+    /// assert_eq!(p.wait(), Ok(Ok(1)));
     /// let p = Promise::<(), _>::from_result(Err("fail"));
-    /// assert_eq!(p.wait(), Err("fail"));
+    /// assert_eq!(p.wait(), Ok(Err("fail")));
     /// ```
     pub fn from_result(result: Result<T, E>) -> Promise<T, E> {
         Promise::new(move || result)
