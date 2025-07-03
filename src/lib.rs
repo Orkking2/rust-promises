@@ -79,7 +79,7 @@ pub struct PromisePanic;
 /// panics, then the promise enters a special state as described by [`poll`](Self::poll). Such promises will not continue to evaluate any functions.
 /// If you are working with functions that can panic (beyond your control), use [`wait_nopanic`](Self::wait_nopanic) instead of [`wait`](Self::wait). 
 ///
-/// ## Thus:
+/// **Thus**:
 /// It remains the general recommendation to use `Result`-based error handling
 /// rather than `unwrap()` in your functions, and this advice remains true for promise functions.
 pub struct Promise<T: Send, E: Send> {
@@ -517,3 +517,8 @@ impl<T: Send + 'static, E: Send + 'static> Promise<T, E> {
     }
 }
 
+impl<T: Send + 'static, E: Send + 'static> From<Result<T, E>> for Promise<T, E> {
+    fn from(result: Result<T, E>) -> Self {
+        Promise::from_result(result)
+    }
+}
