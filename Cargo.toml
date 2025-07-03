@@ -1,5 +1,5 @@
 [package]
-name = "promise"
+name = "promisery"
 description = "A JavaScript-inspired, ergonomic, and composable Promise type for Rust, supporting background work, chaining, and error handling with Result."
 version = "1.0.0"
 edition = "2021"
@@ -9,7 +9,7 @@ categories = ["asynchronous", "concurrency", "data-structures"]
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 authors = ["Nicolas Bird von Eyben <nicolas.bird.voneyben@gmail.com>"]
-documentation = "https://docs.rs/promise"
+documentation = "https://docs.rs/promisery"
 
 [dependencies]
 oneshot = "0.1.11"
