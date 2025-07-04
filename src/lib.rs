@@ -1,4 +1,4 @@
-#![doc(html_root_url = "https://docs.rs/promise/1.0.0")]
+#![doc(html_root_url = "https://docs.rs/promisery/1.0.0")]
 //!
 //! # Promises for Rust
 //!
@@ -40,8 +40,6 @@
 //! ---
 //!
 //! Released under the MIT License.
-
-#![warn(missing_docs)]
 
 #[cfg(test)]
 mod tests;
