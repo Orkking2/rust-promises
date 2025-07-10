@@ -1,4 +1,4 @@
-#![doc(html_root_url = "https://docs.rs/promisery/1.0.0")]
+#![doc(html_root_url = "https://docs.rs/promisery/2.0.1")]
 //!
 //! # Promises for Rust
 //!
